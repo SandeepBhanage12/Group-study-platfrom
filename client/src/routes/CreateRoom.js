@@ -23,7 +23,7 @@ const CreateRoom = () => {
         
             const apiUrl = process.env.NODE_ENV === 'production'
             ? '/get-rooms' 
-            : `${process.env.REACT_APP_BASE_URL}:8181/get-rooms`;
+            : `${process.env.REACT_APP_BASE_URL || 'http://localhost:8181'}/get-rooms`;
 
             axios.post(apiUrl).then(({data}) => {  
                 setExistingRooms(data);

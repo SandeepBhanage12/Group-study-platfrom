@@ -167,10 +167,14 @@ const Room = (props) => {
     setMessages(storedMessages);
 
     const socketUrl = process.env.NODE_ENV === 'production' 
-      ? ''
-      : `${process.env.REACT_APP_BASE_URL}:8181`;
+      ? window.location.origin
+      : `${process.env.REACT_APP_BASE_URL || 'http://localhost:8181'}`;
 
-    socketRef.current = io.connect(socketUrl);
+    socketRef.current = io.connect(socketUrl, { transports: ['websocket'] });
+    socketRef.current.on('connect_error', (err) => {
+      console.error('Socket connection error:', err.message);
+      alert('Unable to connect to the room server. Please check the backend URL and try again.');
+    });
     navigator.mediaDevices
       .getUserMedia({ video: videoConstraints, audio: true })
       .then((stream) => {

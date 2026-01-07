@@ -9,9 +9,6 @@ app.use(express.static(__dirname))
 
 const cors = require('cors')
 
-const key = fs.readFileSync('cert.key');
-const cert = fs.readFileSync('cert.crt');
-
 let server;
 
 const socket = require("socket.io");
@@ -25,13 +22,15 @@ if (process.env.NODE_ENV === 'production') {
 app.use(cors());
 app.use(express.json());
 
-if (process.env.NODE_ENV === 'production') {
-    server = http.createServer(app);
-  } else {
-    const key = fs.readFileSync('cert.key');
-    const cert = fs.readFileSync('cert.crt');
-    server = https.createServer({key, cert}, app);
-  }
+const useHttps = process.env.USE_HTTPS === 'true';
+
+if (useHttps) {
+  const key = fs.readFileSync('cert.key');
+  const cert = fs.readFileSync('cert.crt');
+  server = https.createServer({ key, cert }, app);
+} else {
+  server = http.createServer(app);
+}
 
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'client/build', 'index.html'));

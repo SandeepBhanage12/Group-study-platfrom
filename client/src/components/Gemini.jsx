@@ -144,8 +144,11 @@ const Gemini = () => {
 
   // Function to handle chat messages
   async function run() {
+    if (!query.trim()) return;
+
+    const userQuery = query;
     setQuery('');
-    const newMessages = [...messages, { role: 'user', text: query }];
+    const newMessages = [...messages, { role: 'user', text: userQuery }];
     setMessages(newMessages);
 
     const chatSession = model.startChat({
@@ -156,14 +159,33 @@ const Gemini = () => {
       })),
     });
 
-    const result = await chatSession.sendMessage(query);
-    const modelResponse = result.response.text().replace(/\*/g, '');
+    try {
+      const result = await chatSession.sendMessage(userQuery);
+      const modelResponse = result.response.text().replace(/\*/g, '');
 
-    // Update the chat history with the model's response
-    setMessages((prevMessages) => [
-      ...prevMessages,
-      { role: 'model', text: modelResponse },
-    ]);
+      // Update the chat history with the model's response
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        { role: 'model', text: modelResponse },
+      ]);
+    } catch (error) {
+      console.error('Gemini API error:', error);
+
+      let errorText =
+        'Sorry, there was a problem contacting the AI service. Please try again in a moment.';
+
+      if (error && typeof error.message === 'string') {
+        if (error.message.includes('429') || error.message.toLowerCase().includes('quota')) {
+          errorText =
+            'The AI service quota has been exceeded for this API key. Please wait a bit and try again, or update your Gemini API plan/billing.';
+        }
+      }
+
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        { role: 'model', text: errorText },
+      ]);
+    }
   }
 
   function handleEnter(e) {
