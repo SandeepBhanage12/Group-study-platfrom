@@ -92,3 +92,22 @@ npm run build        # builds the React app into client/build
 - Environment changes require restarting the corresponding server.
 - Room/user data is in-memory; restarting the server clears rooms.
 
+### Deploy on Render (Web Service)
+1) Push this repo to a Git provider (GitHub/GitLab/Bitbucket).
+2) Create a **Web Service** on Render and connect the repo.
+3) Environment:
+   - Add `PORT` = `10000` (Render sets `PORT`; any value is fine, your server reads `process.env.PORT`).
+   - Add `USE_HTTPS` = `false` (Render terminates TLS; keep the app on HTTP internally).
+   - Add `REACT_APP_GEMINI_API_KEY` if you need the AI helper.
+   - `REACT_APP_BASE_URL` is not required in production; the client uses the same origin.
+4) Build command:
+   ```
+   npm install && npm run build
+   ```
+5) Start command:
+   ```
+   npm start
+   ```
+6) Instance type: start with a free/shared instance; scale up if video sessions or users grow.
+7) After first deploy, open the Render URL. Sockets and API will use the same origin automatically.
+

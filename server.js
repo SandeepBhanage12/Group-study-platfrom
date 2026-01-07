@@ -93,6 +93,22 @@ io.on('connection', socket => {
         });
     });
 
+    socket.on("send reaction", ({ roomID, from, type }) => {
+        (users[roomID] || []).forEach(userSocketId => {
+            if (userSocketId !== socket.id) {
+                io.to(userSocketId).emit('receive reaction', { from, type });
+            }
+        });
+    });
+
+    socket.on("pointer move", ({ roomID, x, y }) => {
+        (users[roomID] || []).forEach(userSocketId => {
+            if (userSocketId !== socket.id) {
+                io.to(userSocketId).emit('pointer move', { from: socket.id, x, y });
+            }
+        });
+    });
+
 
     function removeSocketIdFromRoom(){
         const roomID = socketToRoom[socket.id];

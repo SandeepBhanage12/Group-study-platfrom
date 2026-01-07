@@ -51,7 +51,7 @@ const StyledVideo = styled.video`
   width: 23rem;
   border-radius: 10px;
   object-fit: cover;
-  border: 2px solid #ddd;
+  border: 3px solid ${(props) => (props.active ? '#4CAF50' : '#ddd')};
   box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.1);
 `;
 
@@ -66,7 +66,7 @@ const Video = React.memo((props) => {
     });
   }, [props.peer]);
 
-  return <StyledVideo playsInline autoPlay ref={ref} />;
+  return <StyledVideo playsInline autoPlay ref={ref} active={props.active} />;
 });
 
 const videoConstraints = {
@@ -138,21 +138,90 @@ const SendButton = styled.button`
   }
 `;
 
+const GlowingButton = styled.button`
+  position: absolute;
+  right: 1rem;
+  top: 1rem;
+  padding: 10px 20px;
+  background-color: transparent;
+  color: #ff4d4f;
+  font-size: 1rem;
+  font-weight: bold;
+  border: none;
+  cursor: pointer;
+  text-shadow: 0 0 5px rgba(255, 77, 79, 0.8);
+  transition: text-shadow 0.3s ease, transform 0.3s ease;
+  z-index: 2;
 
+  &:hover {
+    text-shadow: 0 0 15px rgba(255, 77, 79, 1);
+    transform: scale(1.1);
+  }
 
+  &:focus {
+    outline: none;
+  }
+`;
 
+const ScreenShareButton = styled.button`
+  position: fixed;
+  bottom: 1rem;
+  left: 12rem;
+  padding: 1rem 1.5rem;
+  background-color: ${props => props.active ? '#0f9d58' : '#1890ff'};
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.3s;
 
+  &:hover {
+    background-color: ${props => props.active ? '#0b7d45' : '#1272c3'};
+  }
+`;
 
+const ReactionToast = styled.div`
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  z-index: 5;
+`;
+
+const PointerDot = styled.div`
+  position: fixed;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 64, 129, 0.9);
+  border: 2px solid white;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  z-index: 6;
+`;
 
 const Room = (props) => {
   const [peers, setPeers] = useState([]);
   const socketRef = useRef();
   const userVideo = useRef();
+  const cameraStreamRef = useRef(null);
+  const displayStreamRef = useRef(null);
   var peersRef = useRef([]);
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState("");
   const roomID = props.match.params.roomID;
   const [isGeminiOpen, setIsGeminiOpen] = useState(0);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [reactionQueue, setReactionQueue] = useState([]);
+  const [pointerPos, setPointerPos] = useState({ x: 0, y: 0, visible: false });
+  const [activeSpeakerId, setActiveSpeakerId] = useState(null);
 
   const {nameInContext, setNameInContext} = useName();
   const [emailThroughInput, setEmailThroughInput] = useState('');
@@ -178,7 +247,9 @@ const Room = (props) => {
     navigator.mediaDevices
       .getUserMedia({ video: videoConstraints, audio: true })
       .then((stream) => {
+        cameraStreamRef.current = stream;
         userVideo.current.srcObject = stream;
+        attachAudioMeter(stream, 'local');
         socketRef.current.emit("join room", roomID);
 
         socketRef.current.on('room full', ()=>{
@@ -214,6 +285,7 @@ const Room = (props) => {
           const item = peersRef.current.find((p) => p.peerID === payload.id);
           item.peer.signal(payload.signal);
         });
+
       });
 
     return () => {
@@ -268,6 +340,10 @@ const Room = (props) => {
 
     peer.signal(incomingSignal);
 
+    peer.on("stream", (remoteStream) => {
+      attachAudioMeter(remoteStream, callerID);
+    });
+
     return peer;
   }
 
@@ -281,6 +357,19 @@ const Room = (props) => {
   useEffect(() => {
     socketRef.current.on("receive message", (data) => {
       setMessages((prevMessages) => [...prevMessages, data]);
+    });
+
+    socketRef.current.on("receive reaction", (payload) => {
+      const id = Date.now() + Math.random();
+      setReactionQueue((prev) => [...prev, { ...payload, id }]);
+      setTimeout(() => {
+        setReactionQueue((prev) => prev.filter((r) => r.id !== id));
+      }, 2500);
+    });
+
+    socketRef.current.on("pointer move", ({ x, y }) => {
+      setPointerPos({ x, y, visible: true });
+      setTimeout(() => setPointerPos((prev) => ({ ...prev, visible: false })), 800);
     });
 
     socketRef.current.on("remove user", (socketIdToRemove) => {
@@ -305,6 +394,11 @@ const Room = (props) => {
       userVideo.current.srcObject = null;
     }
 
+    if (displayStreamRef.current) {
+      displayStreamRef.current.getTracks().forEach((t) => t.stop());
+      displayStreamRef.current = null;
+    }
+
     peersRef.current.forEach((peerObj) => {
       peerObj.peer.destroy();
     });
@@ -317,6 +411,63 @@ const Room = (props) => {
     window.location.href = `/home`;
   }
 
+  async function startScreenShare() {
+    if (isScreenSharing) return;
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: 'always' },
+        audio: false,
+      });
+
+      const displayTrack = displayStream.getVideoTracks()[0];
+      const cameraTrack = cameraStreamRef.current?.getVideoTracks()?.[0];
+
+      displayStreamRef.current = displayStream;
+      setIsScreenSharing(true);
+      userVideo.current.srcObject = displayStream;
+
+      // When user stops via browser UI, revert
+      displayTrack.onended = () => stopScreenShare();
+
+      peersRef.current.forEach(({ peer }) => {
+        if (!(displayTrack && peer && peer._pc)) return;
+        const sender = peer._pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(displayTrack).catch(err => console.error('replaceTrack (start) failed', err));
+        }
+      });
+    } catch (err) {
+      console.error('Error starting screen share:', err);
+      setIsScreenSharing(false);
+    }
+  }
+
+  function stopScreenShare() {
+    if (!isScreenSharing) return;
+
+    const displayTrack = displayStreamRef.current?.getVideoTracks()?.[0];
+    const cameraTrack = cameraStreamRef.current?.getVideoTracks()?.[0];
+
+    if (displayStreamRef.current) {
+      displayStreamRef.current.getTracks().forEach((t) => t.stop());
+      displayStreamRef.current = null;
+    }
+
+    if (cameraStreamRef.current) {
+      userVideo.current.srcObject = cameraStreamRef.current;
+    }
+
+    peersRef.current.forEach(({ peer }) => {
+      if (!(cameraTrack && peer && peer._pc)) return;
+      const sender = peer._pc.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (sender) {
+        sender.replaceTrack(cameraTrack).catch(err => console.error('replaceTrack (stop) failed', err));
+      }
+    });
+
+    setIsScreenSharing(false);
+  }
+
   function handleEnter(e){
     console.log(e.key);
     if(e.key=='Enter'){
@@ -326,38 +477,73 @@ const Room = (props) => {
     } 
   }
 
+  function sendReaction(type){
+    const payload = { roomID, from: nameInContext || 'Guest', type };
+    setReactionQueue((prev) => [...prev, { ...payload, id: Date.now() + Math.random() }]);
+    socketRef.current.emit("send reaction", payload);
+  }
+
+  // Pointer broadcast when screen sharing
+  useEffect(() => {
+    if (!isScreenSharing) return;
+    let lastSent = 0;
+    const handler = (e) => {
+      const now = Date.now();
+      if (now - lastSent < 80) return;
+      lastSent = now;
+      const x = e.clientX / window.innerWidth;
+      const y = e.clientY / window.innerHeight;
+      socketRef.current.emit("pointer move", { roomID, x, y });
+    };
+    window.addEventListener('mousemove', handler);
+    return () => window.removeEventListener('mousemove', handler);
+  }, [isScreenSharing, roomID]);
+
+  // Active speaker detection (basic volume check)
+  const audioContexts = useRef({});
+  const analyserById = useRef({});
+  const volumeById = useRef({});
+
+  function attachAudioMeter(stream, id) {
+    if (!stream) return;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    audioContexts.current[id] = ctx;
+    analyserById.current[id] = analyser;
+  }
+
+  useEffect(() => {
+    let raf;
+    const dataArray = new Uint8Array(256);
+    const tick = () => {
+      Object.entries(analyserById.current).forEach(([id, analyser]) => {
+        analyser.getByteFrequencyData(dataArray);
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        volumeById.current[id] = avg;
+      });
+      // pick loudest over threshold
+      let maxId = null;
+      let maxVal = 0;
+      Object.entries(volumeById.current).forEach(([id, val]) => {
+        if (val > maxVal && val > 30) {
+          maxVal = val;
+          maxId = id;
+        }
+      });
+      setActiveSpeakerId(maxId);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
 
 
 
   
-  const GlowingButton = styled.button`
-  position: absolute;
-  right: 1rem;
-  top: 1rem;
-  padding: 10px 20px;
-  background-color: transparent;
-  color: #ff4d4f;
-  font-size: 1rem;
-  font-weight: bold;
-  border: none;
-  cursor: pointer;
-  text-shadow: 0 0 5px rgba(255, 77, 79, 0.8);
-  transition: text-shadow 0.3s ease, transform 0.3s ease;
-  z-index: 2;
-
-  &:hover {
-    text-shadow: 0 0 15px rgba(255, 77, 79, 1);
-    transform: scale(1.1);
-  }
-
-  &:focus {
-    outline: none;
-  }
-`;
-
-
-
-
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -371,6 +557,34 @@ const Room = (props) => {
 
       <GlowingButton onClick={()=>setIsGeminiOpen(prev => !prev)}>{isGeminiOpen ? "CloseGemini" : "AskGemini"}</GlowingButton>
       <LeaveButton onClick={leaveRoom}>Leave room</LeaveButton>
+      <ScreenShareButton
+        active={isScreenSharing}
+        onClick={() => (isScreenSharing ? stopScreenShare() : startScreenShare())}
+      >
+        {isScreenSharing ? 'Stop Share' : 'Share Screen'}
+      </ScreenShareButton>
+      <div style={{ position: 'fixed', bottom: '1rem', left: '24rem', display: 'flex', gap: '0.5rem', zIndex: 5 }}>
+        {['✋','👍','👏','❤️'].map((r) => (
+          <button
+            key={r}
+            onClick={() => sendReaction(r)}
+            style={{ padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid #ddd', cursor: 'pointer', fontSize: '1.05rem' }}
+          >
+            {r}
+          </button>
+        ))}
+      </div>
+
+      {reactionQueue.map((r) => (
+        <ReactionToast key={r.id}>
+          <span>{r.type}</span>
+          <span>{r.from || 'Someone'}</span>
+        </ReactionToast>
+      ))}
+
+      {pointerPos.visible && (
+        <PointerDot style={{ left: `${pointerPos.x * 100}%`, top: `${pointerPos.y * 100}%` }} />
+      )}
 
       {
         userWhoJoined && <h3 style={{position:'absolute', bottom:'1.8rem', left:'50rem'}}>{userWhoJoined} Joined</h3>
@@ -378,8 +592,8 @@ const Room = (props) => {
 
       <Wrapper style={{display:'flex', gap:'2rem', justifyContent:'space-between'}}>
         <Container style={{maxWidth:'100%',}}>
-          <StyledVideo muted ref={userVideo} autoPlay playsInline />
-          {peers.map((peer, index) => <Video key={index} peer={peer} />)}
+          <StyledVideo muted ref={userVideo} autoPlay playsInline active={activeSpeakerId === 'local'} />
+          {peers.map((peer, index) => <Video key={index} peer={peer} active={activeSpeakerId === peer.peerSocketId} />)}
         </Container>
 
         <div style={{ display: 'flex', gap:'1rem', flexDirection: 'row', height: '100%', width:'100%'}}>
